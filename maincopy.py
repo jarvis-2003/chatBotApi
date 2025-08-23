@@ -4,6 +4,7 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 import os , uuid
+import json
 
 
 app = FastAPI()
@@ -17,6 +18,9 @@ app.add_middleware(
 )
 
 Holdsession = {};
+
+with open("state_city.json", "r") as file:
+    stateandcity = json.load(file)
 
 class Answers(BaseModel):
     session_id: str
@@ -69,14 +73,55 @@ def SaveandFilter(data: Answers):
     if len(Holdsession[Get_session_id]["answers"]) + 1 < total_questions:
         if data.name is not None:
             # logic for validations
-            Holdsession[Get_session_id]["answers"][data.name.lower()] = data.answer
-            print(Holdsession)
+            if data.name.lower() == "location":
+                location = data.answer.split(",")
+                temploclist = []
+                for x in location:
+                    temploclist.append(x.strip().title())
+                # case 1 if the answer is in format ["state,city"]
+                if len(temploclist) == 2:
+                    state,city = temploclist
+                    if state in stateandcity.keys():
+                        if city.lower() in [c.lower() for c in stateandcity[state]]:
+                            Holdsession[Get_session_id]["answers"][data.name.lower()] = f"{state},{city}"
+                            return {"status" : "saved" , "location":f"{state},{city}"}
+                        else:
+                            return{"error" : "Invalid state/city combination. Please try again"}
+                # case 2 if the answer only contains the state ["state"]
+                elif data.answer.strip().title() in stateandcity.keys():
+                    state = data.answer.strip().title()
+                    options = stateandcity[state]
+                    return {"status":"need_city" , "next_question": f"Please Provide a city in {state}" , "optionsAndanswer":{"answer":state ,"city_options": options}}
+                # case 3 if the user only provides the city["city"]
+                else:
+                    city = data.answer.strip().title()
+                    # logic for getting the key value from the cities
+                    matching_states = []
+                    for key,value in stateandcity.items():
+                        if city.lower() in [c.lower() for c in value]:
+                            matching_states.append(key)
+                    if len(matching_states) == 1:
+                        Holdsession[Get_session_id]["answers"][data.name.lower()] = f"{matching_states[0]},{city}"
+                        return {"status": "saved", "location": f"{matching_states[0]},{city}"}
+                    elif len(matching_states) > 1:
+                        return {"status" : "need_state" , "next_question": f"Please choose the state for {city}" , "optionsAndanswer":{
+                            "answer" : city , "state_option":matching_states
+                        }}
+                    else:
+                        return {
+                            "error":f"Try again with a valid city/state in India"
+                        }
+            if data.name.lower() != "location":
+                Holdsession[Get_session_id]["answers"][data.name.lower()] = data.answer
+                print(Holdsession)
+                return {"status": "saved"}
 
     # this is for adding the last record to the answers and saving it to Records
     elif len(Holdsession[Get_session_id]["answers"]) + 1 == total_questions:
         if data.name is not None:
-            Holdsession[Get_session_id]["answers"][data.name.lower()] = data.answer
-            print(Holdsession)
+            if data.name.lower():
+                Holdsession[Get_session_id]["answers"][data.name.lower()] = data.answer
+                print(Holdsession)
 
         email = Holdsession[Get_session_id]["answers"].get("email")
         phone = Holdsession[Get_session_id]["answers"].get("phone")
@@ -90,6 +135,7 @@ def SaveandFilter(data: Answers):
             # Here the logic of filtering will be written then answers will be cleared.
 
         Holdsession[Get_session_id]["answers"].clear()
+        return {"status": "saved"}
     else:
         return {"error": "All questions already answered"}
 
