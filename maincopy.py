@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 import os , uuid
 import json
+from rapidfuzz import process,fuzz
 
 
 app = FastAPI()
@@ -27,6 +28,10 @@ class Answers(BaseModel):
     name: str
     answer: str
 
+class fuzzycheck(BaseModel):
+    locations: str
+    loclist : list[str]
+
 load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI")
@@ -35,13 +40,14 @@ MONGO_DB = os.getenv("MONGO_DB_NAME")
 # setting up th dataBase client.
 client = MongoClient(MONGO_URI)
 db = client[MONGO_DB]
-botQuestions = db["botQuestion"]
+
 Records = db["Records"]
 
 
 @app.get("/questions")
 def questions(session_id: str | None = Header(default=None)):
     print(session_id)
+    botQuestions = db["botQuestion"]
     if session_id and session_id in Holdsession:
         templist = []
         total = botQuestions.count_documents({})
@@ -64,6 +70,7 @@ def questions(session_id: str | None = Header(default=None)):
 
 @app.post("/save-answer")
 def SaveandFilter(data: Answers):
+    botQuestions = db["botQuestion"]
     Get_session_id = data.session_id
     if Get_session_id not in Holdsession:
         return{"error":"Invalid session_id or has expired"}
@@ -139,6 +146,21 @@ def SaveandFilter(data: Answers):
     else:
         return {"error": "All questions already answered"}
 
+@app.post("/rapidfuzzy")
+def locationcheck(data: fuzzycheck):
+    all_cities = []
+    for key , value in stateandcity.items():
+        for x in value:
+            all_cities.append(x)
+    temp = []
+    matches = process.extract(data.locations, data.loclist , limit = 3 , scorer=fuzz.WRatio)
+    for match,score,_ in matches:
+        if score > 50:
+            temp.append(match)
+    return {"expected_cities":temp}
+
+    
+    
 
 #Things left to do 
 # 1)Admin api functionality :Update&Delete Records :Add Questions and can Add Property
