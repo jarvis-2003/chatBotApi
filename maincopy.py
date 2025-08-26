@@ -6,6 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import os , uuid
 import json
 from rapidfuzz import process,fuzz
+from typing import Optional
+import secrets,string,smtplib
+from email.mime.text import MIMEText
+from twilio.rest import Client
 
 
 app = FastAPI()
@@ -31,6 +35,11 @@ class Answers(BaseModel):
 class fuzzycheck(BaseModel):
     locations: str
     loclist : list[str]
+
+class validateEmailPhone(BaseModel):
+    session_id: str
+    email: Optional[str] = None
+    phone: Optional[int] = None 
 
 load_dotenv()
 
@@ -153,12 +162,76 @@ def locationcheck(data: fuzzycheck):
         for x in value:
             all_cities.append(x)
     temp = []
-    matches = process.extract(data.locations, data.loclist , limit = 3 , scorer=fuzz.WRatio)
+    matches = process.extract(data.locations.strip().title(), data.loclist , limit = 3 , scorer=fuzz.WRatio)
     for match,score,_ in matches:
-        if score > 50:
+        if score > 70:
             temp.append(match)
     return {"expected_cities":temp}
 
+@app.post("/otpgen")
+def otpgenrator(data: validateEmailPhone):
+    if data.email and data.session_id in Holdsession:
+        otp = generate_secure_otp()
+        # store the otp in Holdsession
+        Holdsession[data.session_id]["otp_email"] = otp
+        Holdsession[data.session_id]["email"] = data.email.strip()
+        #send the otp using mail first
+        msg = MIMEText(f"Your Verification OTP is: {otp}")
+        msg['Subject'] = "Your OTP Code"
+        msg['From'] = "sms.alert069@gmail.com"
+        msg['To'] = data.email.strip()
+        server = smtplib.SMTP('smtp.gmail.com',587)
+        try:
+            server.starttls()
+            server.login('sms.alert069@gmail.com',os.getenv("APP_PASSWORD"))
+            server.sendmail("sms.alert069@gmail.com",data.email.strip(),msg.as_string())
+            return f"otp :{otp} sent sucessfully to {data.email.strip()}"
+        except Exception as e:
+            return {"error": "Email not sent Somthing went wrong"}
+    # for phone number otpgen
+    if data.phone and data.session_id in Holdsession:
+        otp = generate_secure_otp()
+        # store the otp in Holdsession
+        Holdsession[data.session_id]["otp_phone"] = otp
+        Holdsession[data.session_id]["phone"] = data.phone
+        account_sid = os.getenv("ACCOUNT_SID")
+        auth_token = os.getenv("AUTH_TOKEN")
+        print(account_sid)
+        print(auth_token)
+        client = Client(account_sid,auth_token)
+        print(client)
+
+        reqmessage = f"Your otp for CBH_ChatBOT is {otp}"
+        try:
+            client.messages.create(
+                to = f"+91{data.phone}",
+                from_="+12182261453",
+                body = reqmessage
+            )
+            return f"otp :{otp} sent sucessfully to {data.phone}"
+        except Exception as e:
+            return {"error" : "Sms not sent something went wrong"}
+    return {"error": "No valid email or phone provided."}
+        
+
+        
+@app.get("/validateOtp")
+def validateOtp(session_id: str | None = Header(default=None),otp: str | None = Header(default=None)):
+    validate = False
+    print(f"session id is {session_id}\n otp is:{otp}")
+    if session_id in Holdsession:
+       
+       if str(Holdsession[session_id].get("otp_email")) == otp:
+           validate = True
+           Holdsession[session_id]["answers"]["email"] = Holdsession[session_id].get("email")
+           Holdsession[session_id].pop("email",None)
+           Holdsession[session_id].pop("otp_email",None)
+       elif str(Holdsession[session_id].get("otp_phone")) == otp:
+           validate = True
+           Holdsession[session_id]["answers"]["phone"] = Holdsession[session_id].get("phone")
+           Holdsession[session_id].pop("phone",None)
+           Holdsession[session_id].pop("otp_phone",None) 
+    return {"status":validate}
     
     
 
@@ -167,3 +240,10 @@ def locationcheck(data: fuzzycheck):
 # 2)Make it Thread safe  :done
 # 3)Filter out data and make a pdf using third party application
 # 4)Send the PDF as Response to the destined User.
+
+def generate_secure_otp(length=6):
+    digits = string.digits
+    otp = ""
+    for _ in range(length):
+        otp += secrets.choice(digits)
+    return otp
