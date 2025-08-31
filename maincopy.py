@@ -10,6 +10,7 @@ from typing import Optional
 import secrets,string,smtplib
 from email.mime.text import MIMEText
 from twilio.rest import Client
+import time ,threading
 
 
 app = FastAPI()
@@ -30,7 +31,7 @@ with open("state_city.json", "r") as file:
 class Answers(BaseModel):
     session_id: str
     name: str
-    answer: str
+    answer: str | list[str]
 
 class fuzzycheck(BaseModel):
     locations: str
@@ -67,7 +68,7 @@ def questions(session_id: str | None = Header(default=None)):
         return {"questionlist":templist , "session_id":session_id}
     else:
         new_session_id = str(uuid.uuid4())
-        Holdsession[new_session_id] = {"answers":{},"completed":False} 
+        Holdsession[new_session_id] = {"answers":{},"time-stamp": time.time()} 
         templist = []
         total = botQuestions.count_documents({})
         for x in range(1, total + 1):
@@ -88,12 +89,14 @@ def SaveandFilter(data: Answers):
     # still collecting answers
     if len(Holdsession[Get_session_id]["answers"]) + 1 < total_questions:
         if data.name is not None:
+            Holdsession[Get_session_id]["time-stamp"] = time.time()
             # logic for validations
             if data.name.lower() == "location":
                 location = data.answer.split(",")
                 temploclist = []
                 for x in location:
                     temploclist.append(x.strip().title())
+                print(temploclist)
                 # case 1 if the answer is in format ["state,city"]
                 if len(temploclist) == 2:
                     state,city = temploclist
@@ -104,26 +107,11 @@ def SaveandFilter(data: Answers):
                         else:
                             return{"error" : "Invalid state/city combination. Please try again"}
                 # case 2 if the answer only contains the state ["state"]
-                elif data.answer.strip().title() in stateandcity.keys():
-                    state = data.answer.strip().title()
-                    options = stateandcity[state]
-                    return {"status":"need_city" , "next_question": f"Please Provide a city in {state}" , "optionsAndanswer":{"answer":state ,"city_options": options}}
-                # case 3 if the user only provides the city["city"]
+                elif "Chhattisgarh" in stateandcity.keys():
+                    options = stateandcity["Chhattisgarh"]
+                    return {"status":"need_city", "optionsAndanswer":{"answer":"Chhattishgarh","city_options": options}}
                 else:
-                    city = data.answer.strip().title()
-                    # logic for getting the key value from the cities
-                    matching_states = []
-                    for key,value in stateandcity.items():
-                        if city.lower() in [c.lower() for c in value]:
-                            matching_states.append(key)
-                    if len(matching_states) == 1:
-                        Holdsession[Get_session_id]["answers"][data.name.lower()] = f"{matching_states[0]},{city}"
-                        return {"status": "saved", "location": f"{matching_states[0]},{city}"}
-                    elif len(matching_states) > 1:
-                        return {"status" : "need_state" , "next_question": f"Please choose the state for {city}" , "optionsAndanswer":{
-                            "answer" : city , "state_option":matching_states
-                        }}
-                    else:
+                        
                         return {
                             "error":f"Try again with a valid city/state in India"
                         }
@@ -135,6 +123,7 @@ def SaveandFilter(data: Answers):
     # this is for adding the last record to the answers and saving it to Records
     elif len(Holdsession[Get_session_id]["answers"]) + 1 == total_questions:
         if data.name is not None:
+            Holdsession[Get_session_id]["time-stamp"] = time.time()
             if data.name.lower():
                 Holdsession[Get_session_id]["answers"][data.name.lower()] = data.answer
                 print(Holdsession)
@@ -170,48 +159,60 @@ def locationcheck(data: fuzzycheck):
 
 @app.post("/otpgen")
 def otpgenrator(data: validateEmailPhone):
+    
     if data.email and data.session_id in Holdsession:
-        otp = generate_secure_otp()
+        Holdsession[data.session_id]["time-stamp"] = time.time()
+        findMail = Records.find_one({"email": data.email})
+        if not findMail:
+            otp = generate_secure_otp()
         # store the otp in Holdsession
-        Holdsession[data.session_id]["otp_email"] = otp
-        Holdsession[data.session_id]["email"] = data.email.strip()
+            Holdsession[data.session_id]["otp_email"] = otp
+            Holdsession[data.session_id]["email"] = data.email.strip()
         #send the otp using mail first
-        msg = MIMEText(f"Your Verification OTP is: {otp}")
-        msg['Subject'] = "Your OTP Code"
-        msg['From'] = "sms.alert069@gmail.com"
-        msg['To'] = data.email.strip()
-        server = smtplib.SMTP('smtp.gmail.com',587)
-        try:
-            server.starttls()
-            server.login('sms.alert069@gmail.com',os.getenv("APP_PASSWORD"))
-            server.sendmail("sms.alert069@gmail.com",data.email.strip(),msg.as_string())
-            return f"otp :{otp} sent sucessfully to {data.email.strip()}"
-        except Exception as e:
-            return {"error": "Email not sent Somthing went wrong"}
+            msg = MIMEText(f"Your Verification OTP is: {otp}")
+            msg['Subject'] = "Your OTP Code"
+            msg['From'] = "sms.alert069@gmail.com"
+            msg['To'] = data.email.strip()
+            server = smtplib.SMTP('smtp.gmail.com',587)
+            try:
+                server.starttls()
+                server.login('sms.alert069@gmail.com',os.getenv("APP_PASSWORD"))
+                server.sendmail("sms.alert069@gmail.com",data.email.strip(),msg.as_string())
+                return f"otp :{otp} sent sucessfully to {data.email.strip()}"
+            except Exception as e:
+                return {"error": "Email not sent Somthing went wrong"}
+            finally:
+                server.quit()
+        else:
+            return {"status" : True}
     # for phone number otpgen
     if data.phone and data.session_id in Holdsession:
-        otp = generate_secure_otp()
-        # store the otp in Holdsession
-        Holdsession[data.session_id]["otp_phone"] = otp
-        Holdsession[data.session_id]["phone"] = data.phone
-        account_sid = os.getenv("ACCOUNT_SID")
-        auth_token = os.getenv("AUTH_TOKEN")
-        print(account_sid)
-        print(auth_token)
-        client = Client(account_sid,auth_token)
-        print(client)
+        Holdsession[data.session_id]["time-stamp"] = time.time()
+        findPhone = Records.find_one({"phone": data.phone})
+        if not findPhone:
+            otp = generate_secure_otp()
+            # store the otp in Holdsession
+            Holdsession[data.session_id]["otp_phone"] = otp
+            Holdsession[data.session_id]["phone"] = data.phone
+            account_sid = os.getenv("ACCOUNT_SID")
+            auth_token = os.getenv("AUTH_TOKEN")
+            print(account_sid)
+            print(auth_token)
+            client = Client(account_sid,auth_token)
+            print(client)
 
-        reqmessage = f"Your otp for CBH_ChatBOT is {otp}"
-        try:
-            client.messages.create(
-                to = f"+91{data.phone}",
-                from_="+12182261453",
-                body = reqmessage
-            )
-            return f"otp :{otp} sent sucessfully to {data.phone}"
-        except Exception as e:
-            return {"error" : "Sms not sent something went wrong"}
-    return {"error": "No valid email or phone provided."}
+            reqmessage = f"Your otp for CBH_ChatBOT is {otp}"
+            try:
+                client.messages.create(
+                    to = f"+91{data.phone}",
+                    from_="+12182261453",
+                    body = reqmessage
+                )
+                return f"otp :{otp} sent sucessfully to {data.phone}"
+            except Exception as e:
+                return {"error" : "Sms not sent something went wrong"}
+        else:
+            return {"status":True}
         
 
         
@@ -219,8 +220,7 @@ def otpgenrator(data: validateEmailPhone):
 def validateOtp(session_id: str | None = Header(default=None),otp: str | None = Header(default=None)):
     validate = False
     print(f"session id is {session_id}\n otp is:{otp}")
-    if session_id in Holdsession:
-       
+    if session_id in Holdsession:       
        if str(Holdsession[session_id].get("otp_email")) == otp:
            validate = True
            Holdsession[session_id]["answers"]["email"] = Holdsession[session_id].get("email")
@@ -247,3 +247,22 @@ def generate_secure_otp(length=6):
     for _ in range(length):
         otp += secrets.choice(digits)
     return otp
+
+SESSION_TIMEOUT = 1800
+
+def session_cleaner():
+    while True:
+        now = time.time()
+        expired = []
+        for key, value in list(Holdsession.items()):
+            if (now - value.get("time-stamp", now)) > SESSION_TIMEOUT:
+                expired.append(key)
+
+        for each_session in expired:
+            print(f"Session : {each_session} expired and removed")
+            del Holdsession[each_session]
+        time.sleep(120)
+
+print(Holdsession)
+cleaner_thread = threading.Thread(target=session_cleaner,daemon=True)
+cleaner_thread.start()
