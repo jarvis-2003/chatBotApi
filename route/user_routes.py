@@ -72,8 +72,7 @@ def SaveandFilter(data: Answers):
                 elif "Chhattisgarh" in stateandcity.keys():
                     options = stateandcity["Chhattisgarh"]
                     return {"status":"need_city", "optionsAndanswer":{"answer":"Chhattishgarh","city_options": options}}
-                else:
-                                
+                else:           
                         return {"error":f"Try again with a valid city/state in India"}
             if data.name.lower() != "location":
                 Holdsession[Get_session_id]["answers"][data.name.lower()] = data.answer
@@ -121,6 +120,7 @@ def locationcheck(data: fuzzycheck):
 
 @router.post("/otpgen")
 def otpgenrator(data: validateEmailPhone):
+    print(data)
         # For email OTP
     if data.email and data.session_id in Holdsession:
         Holdsession[data.session_id]["time-stamp"] = time.time()

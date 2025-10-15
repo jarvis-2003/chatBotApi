@@ -3,7 +3,7 @@
 # handle the basemodels
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from route import user_routes
+from route import user_routes,wattsapp_routes
 from utils.hold_session import cleaner_thread
 
 
@@ -18,4 +18,5 @@ app.add_middleware(
 )
 
 app.include_router(user_routes.router)
+app.include_router(wattsapp_routes.router)
 cleaner_thread.start()
